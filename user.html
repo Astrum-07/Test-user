@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imtihon Tizimi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+        body { font-family: 'Space Mono', monospace; background-color: #050505; color: white; overflow-x: hidden; }
+        .matrix-canvas { position: fixed; top: 0; left: 0; z-index: 0; opacity: 0.2; pointer-events: none; }
+        .content-wrap { position: relative; z-index: 10; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #0db182; }
+        
+        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .opt-btn { transition: all 0.2s; border-radius: 0px; text-align: left; }
+        .opt-btn.selected { background-color: #10b981 !important; color: #000 !important; font-weight: bold; border-color: #10b981 !important; box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); }
+        
+        .result-card { border-left: 4px solid #334155; margin-bottom: 1rem; padding: 1.5rem; background: rgba(255,255,255,0.02); }
+        .result-card.correct { border-left-color: #10b981; }
+        .result-card.wrong { border-left-color: #ef4444; }
+    </style>
+</head>
+<body>
+    <canvas id="matrix" class="matrix-canvas"></canvas>
+
+    <div id="app" class="content-wrap p-4">
+        <div class="text-emerald-500 text-xl animate-pulse font-bold uppercase tracking-widest">Tizim yuklanmoqda...</div>
+    </div>
+
+    <script>
+        const BASE_URL = "https://69080b1eb49bea95fbf23575.mockapi.io/api/v1";
+        const ADMIN_PASS = "0412";
+
+        let questions = JSON.parse(localStorage.getItem('test_questions')) || [];
+        let user = JSON.parse(localStorage.getItem('test_user')) || { name: '', surname: '' };
+        let answers = JSON.parse(localStorage.getItem('test_answers')) || {};
+        let timeLeft = parseInt(localStorage.getItem('test_time')) || 0;
+        let timerInterval;
+
+        // Matrix Fon
+        const canvas = document.getElementById('matrix');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const drops = Array(Math.floor(canvas.width / 16)).fill(1);
+        function drawMatrix() {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.05)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#0db182"; ctx.font = "16px monospace";
+            drops.forEach((y, i) => {
+                const text = String.fromCharCode(0x30A0 + Math.random() * 96);
+                ctx.fillText(text, i * 16, y * 16);
+                if (y * 16 > canvas.height && Math.random() > 0.975) drops[i] = 0;
+                drops[i]++;
+            });
+        }
+        setInterval(drawMatrix, 50);
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        }
+
+        async function init() {
+            // 1. Blokirovka tekshiruvi
+            if (localStorage.getItem('test_completed') === 'true') {
+                showLockedScreen();
+                return;
+            }
+
+            // 2. Savollarni yuklash
+            if (questions.length === 0) {
+                try {
+                    const res = await fetch(`${BASE_URL}/questions`);
+                    questions = await res.json();
+                    localStorage.setItem('test_questions', JSON.stringify(questions));
+                } catch (err) {
+                    document.getElementById('app').innerHTML = `<div class="text-red-500">API xatosi!</div>`;
+                    return;
+                }
+            }
+
+            // 3. Qayerda to'xtaganini aniqlash
+            if (user.name && timeLeft > 0) {
+                renderQuiz();
+                startTimer();
+            } else {
+                showLogin();
+            }
+        }
+
+        function showLockedScreen() {
+            document.getElementById('app').innerHTML = `
+                <div class="w-full max-w-md glass p-10 text-center">
+                    <h2 class="text-2xl font-bold text-emerald-500 mb-6 uppercase">Test yakunlangan</h2>
+                    <p class="text-zinc-400 mb-8">Siz ushbu testni topshirib bo'lgansiz. Qayta topshirish uchun admin ruxsati kerak.</p>
+                    <button onclick="unlockTest()" class="w-full py-4 bg-zinc-800 hover:bg-zinc-700 font-bold uppercase tracking-widest text-xs">Admin ruxsati</button>
+                </div>
+            `;
+        }
+
+        async function unlockTest() {
+            const { value: pass } = await Swal.fire({
+                title: 'ADMIN TASDIQLASH',
+                input: 'password',
+                inputPlaceholder: 'Parolni kiriting',
+                background: '#111', color: '#10b981', confirmButtonColor: '#10b981'
+            });
+
+            if (pass === ADMIN_PASS) {
+                localStorage.clear();
+                location.reload();
+            } else if (pass) {
+                Swal.fire({ icon: 'error', title: 'Xato parol!' });
+            }
+        }
+
+        function showLogin() {
+            document.getElementById('app').innerHTML = `
+                <div class="w-full max-w-md glass p-10 shadow-2xl">
+                    <h2 class="text-3xl font-black mb-8 text-white uppercase text-center italic border-b border-white/10 pb-4">Kirish</h2>
+                    <div class="space-y-6">
+                        <input id="name" placeholder="ISMINGIZ" class="w-full bg-black/50 border border-white/10 p-5 outline-none focus:border-emerald-500 text-white font-bold uppercase">
+                        <input id="surname" placeholder="FAMILIYANGIZ" class="w-full bg-black/50 border border-white/10 p-5 outline-none focus:border-emerald-500 text-white font-bold uppercase">
+                        <button onclick="startQuiz()" class="w-full bg-emerald-600 hover:bg-emerald-500 py-5 font-black text-black uppercase tracking-widest transition-all">Boshlash</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function startQuiz() {
+            user.name = document.getElementById('name').value.trim();
+            user.surname = document.getElementById('surname').value.trim();
+            if(!user.name || !user.surname) return Swal.fire({ icon: 'warning', text: 'Ma\'lumotlarni to\'ldiring!' });
+            
+            timeLeft = questions.length * 30; // Har bir savolga 30 sekund
+            localStorage.setItem('test_user', JSON.stringify(user));
+            localStorage.setItem('test_time', timeLeft);
+            
+            renderQuiz();
+            startTimer();
+        }
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                localStorage.setItem('test_time', timeLeft);
+                const td = document.getElementById('timer-display');
+                if(td) td.innerText = formatTime(timeLeft);
+                if(timeLeft <= 0) finishQuiz(true);
+            }, 1000);
+        }
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = s % 60;
+            return `${m}:${sec < 10 ? '0' : ''}${sec}`;
+        }
+
+        function renderQuiz() {
+            document.getElementById('app').className = "content-wrap px-4 py-8";
+            document.getElementById('app').innerHTML = `
+                <div class="w-full glass fixed top-0 left-0 z-50 px-6 py-4 flex justify-between items-center">
+                    <span class="text-emerald-500 font-bold uppercase text-xs tracking-tighter">${user.surname} ${user.name}</span>
+                    <div id="timer-display" class="text-2xl font-black text-emerald-500 border border-emerald-500 px-4 py-1">${formatTime(timeLeft)}</div>
+                </div>
+                <div class="w-full max-w-3xl mt-20 space-y-8 mb-24">
+                    ${questions.map((q, idx) => `
+                        <div class="glass p-8 question-block" data-qid="${q.id}">
+                            <h3 class="text-xl font-bold mb-8 leading-relaxed"><span class="text-emerald-500">#${idx+1}</span> ${escapeHTML(q.question)}</h3>
+                            <div class="grid grid-cols-1 gap-3">
+                                ${q.options.map(opt => `
+                                    <button onclick="handleAnswer(this, '${q.id}', \`${escapeHTML(opt)}\`)" 
+                                        class="opt-btn p-4 border border-white/10 bg-white/5 hover:border-emerald-500/50 ${answers[q.id] === opt ? 'selected' : ''}">
+                                        ${escapeHTML(opt)}
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                    <button onclick="finishQuiz()" class="w-full bg-emerald-600 hover:bg-emerald-500 p-6 text-black font-black uppercase tracking-[0.5em] transition-all">Testni Yakunlash</button>
+                </div>
+            `;
+        }
+
+        window.handleAnswer = (el, qId, optValue) => {
+            answers[qId] = optValue;
+            localStorage.setItem('test_answers', JSON.stringify(answers));
+            const parent = el.closest('.question-block');
+            parent.querySelectorAll('.opt-btn').forEach(btn => btn.classList.remove('selected'));
+            el.classList.add('selected');
+        };
+
+        async function finishQuiz(isTimeout = false) {
+            clearInterval(timerInterval);
+            let score = 0;
+            questions.forEach(q => {
+                if(answers[q.id] && answers[q.id].trim() === q.correctAnswer.trim()) score++;
+            });
+            const percent = Math.round((score / questions.length) * 100);
+
+            Swal.fire({ title: 'Natija hisoblanmoqda...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            try {
+                await fetch(`${BASE_URL}/results`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ...user, score, total: questions.length, percent, date: new Date().toLocaleString() })
+                });
+                localStorage.setItem('test_completed', 'true');
+                localStorage.setItem('test_final_stats', JSON.stringify({ score, percent }));
+                Swal.close();
+                showResults(score, percent);
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Saqlashda xato!' });
+            }
+        }
+
+        function showResults(score, percent) {
+            let reportHTML = questions.map((q, idx) => {
+                const uAns = answers[q.id] || "Javob berilmagan";
+                const isCorrect = uAns.trim() === q.correctAnswer.trim();
+                return `
+                    <div class="result-card ${isCorrect ? 'correct' : 'wrong'}">
+                        <p class="text-xs font-bold text-zinc-500 mb-2 uppercase">Savol #${idx+1}</p>
+                        <p class="font-bold mb-4">${escapeHTML(q.question)}</p>
+                        <div class="text-sm space-y-2">
+                            <p class="${isCorrect ? 'text-emerald-500' : 'text-red-500'}">Sizning javobingiz: ${escapeHTML(uAns)}</p>
+                            ${!isCorrect ? `<p class="text-emerald-500 font-bold italic">To'g'ri javob: ${escapeHTML(q.correctAnswer)}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('app').innerHTML = `
+                <div class="w-full max-w-4xl mt-10 mb-20">
+                    <div class="glass p-12 text-center border-b-8 border-emerald-500 mb-10">
+                        <h1 class="text-8xl font-black text-emerald-500 mb-4">${percent}%</h1>
+                        <h2 class="text-2xl font-bold uppercase tracking-widest">${user.name} ${user.surname}</h2>
+                        <p class="text-zinc-500 mt-2">Jami savollar: ${questions.length} | To'g'ri: ${score}</p>
+                        <button onclick="unlockTest()" class="mt-8 text-[10px] border border-zinc-800 px-6 py-2 hover:bg-white hover:text-black transition-all font-bold">QAYTA TOPSHIRISH (ADMIN)</button>
+                    </div>
+                    <h3 class="text-xl font-bold uppercase text-emerald-500 mb-6 pl-4 border-l-4 border-emerald-500">Batafsil Hisobot</h3>
+                    <div class="space-y-4">
+                        ${reportHTML}
+                    </div>
+                </div>
+            `;
+            window.scrollTo(0,0);
+        }
+
+        init();
+    </script>
+</body>
+</html>
