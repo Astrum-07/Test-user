@@ -133,7 +133,10 @@
             user.surname = document.getElementById('surname').value.trim();
             if(!user.name || !user.surname) return Swal.fire({ icon: 'warning', text: 'Ma\'lumotlarni to\'ldiring!' });
             
-            timeLeft = questions.length * 30; // Har bir savolga 30 sekund
+            // --- O'ZGARTIRILGAN QISM: Har bir savolga 60 soniya (1 daqiqa) ---
+            timeLeft = questions.length * 60; 
+            // -------------------------------------------------------------
+
             localStorage.setItem('test_user', JSON.stringify(user));
             localStorage.setItem('test_time', timeLeft);
             
